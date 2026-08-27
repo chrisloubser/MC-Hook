@@ -1,7 +1,6 @@
 import yfinance as yf
 import requests
 import os
-import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -9,24 +8,14 @@ from datetime import datetime
 WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
 
-def get_market_data(tickers_dict):
-    """Fetches 2-day historical data and calculates percentage change."""
+def get_market_data(tickers_dict, is_yield=False):
+    """Fetches 2-day historical data for each ticker safely."""
     results = []
-    tickers = list(tickers_dict.keys())
 
-    # Download all tickers at once to speed up the script
-    data = yf.download(tickers, period="2d", group_by='ticker', progress=False)
-
-    for ticker in tickers:
-        name = tickers_dict[ticker]
+    for ticker, name in tickers_dict.items():
         try:
-            # Handle yfinance data structures (varies based on single vs multiple tickers)
-            if len(tickers) == 1:
-                hist = data
-            else:
-                hist = data[ticker]
-
-            # Drop missing values (in case a market was closed)
+            # Fetch individually to avoid MultiIndex DataFrame crashes
+            hist = yf.Ticker(ticker).history(period="2d")
             hist = hist.dropna()
 
             if len(hist) >= 2:
@@ -37,41 +26,40 @@ def get_market_data(tickers_dict):
                 # Visual indicators
                 emoji = "🟩" if change_pct >= 0 else "🟥"
 
-                # Format price differently based on asset size
-                if close_today > 1000:
-                    price_str = f"{close_today:,.0f}"
+                # Format price differently based on asset size or if it's a yield percentage
+                if is_yield:
+                    price_str = f"{close_today:.3f}%"
                 else:
-                    price_str = f"{close_today:,.2f}"
+                    if close_today > 1000:
+                        price_str = f"${close_today:,.0f}"
+                    else:
+                        price_str = f"${close_today:,.2f}"
 
                 results.append(f"{emoji} **{name}**: {price_str} ({change_pct:+.2f}%)")
             else:
                 results.append(f"⚠️ **{name}**: Market Closed / No Data")
-        except Exception:
+        except Exception as e:
             results.append(f"⚠️ **{name}**: Error fetching data")
 
     return results
 
 
 def get_google_news():
-    """Scrapes the top financial headline from Google News RSS."""
+    """Scrapes the top financial headline using the requests library."""
     try:
-        # Search query for "Stock Market" top news in the US
         rss_url = "https://news.google.com/rss/search?q=stock+market+finance&hl=en-US&gl=US&ceid=US:en"
 
-        # Add a user-agent so Google doesn't block the automated request
-        req = urllib.request.Request(rss_url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
-            xml_data = response.read()
+        # Using requests is much safer than urllib for RSS feeds
+        response = requests.get(rss_url, headers={'User-Agent': 'Mozilla/5.0'})
 
-        # Parse the XML to grab the first <item> (top story)
-        root = ET.fromstring(xml_data)
-        first_item = root.find('./channel/item')
+        if response.status_code == 200:
+            root = ET.fromstring(response.text)
+            first_item = root.find('./channel/item')
 
-        if first_item is not None:
-            title = first_item.find('title').text
-            link = first_item.find('link').text
-            return f"📰 **Top Market Story:** [{title}]({link})"
-
+            if first_item is not None:
+                title = first_item.find('title').text
+                link = first_item.find('link').text
+                return f"📰 **Top Market Story:** [{title}]({link})"
     except Exception as e:
         print(f"News fetch error: {e}")
         pass
@@ -91,13 +79,33 @@ def main():
     commodities = {
         'GC=F': 'Gold',
         'SI=F': 'Silver',
-        'CL=F': 'Crude Oil'
+        'CL=F': 'Crude Oil',
+        'BTC-USD': 'Bitcoin',
+        'ETH-USD': 'Ethereum'
     }
 
     movers = {
         'NVDA': 'Nvidia',
         'TSLA': 'Tesla',
-        'AAPL': 'Apple'
+        'AAPL': 'Apple',
+        'GOOGL': 'Google',
+        'MSFT': 'Microsoft',
+        'META': 'Meta'
+    }
+
+    other_crypto = {
+        'ZEC-USD': 'Zcash',
+        'XRP-USD': 'XRP',
+        'LINK-USD': 'Chainlink'
+    }
+
+    treasuries_yields = {
+        '^TNX': '10-Year Treasury Yield',
+        '^FVX': '5-Year Treasury Yield'
+    }
+
+    treasuries_etfs = {
+        'TLT': 'iShares 20+ Year Treasury ETF'
     }
 
     # 2. Construct the Discord message
@@ -108,12 +116,22 @@ def main():
     for line in get_market_data(indices):
         message += f"{line}\n"
 
-    message += "\n**🛢️ Commodities:**\n"
+    message += "\n**🛢️ Commodities & Core Crypto:**\n"
     for line in get_market_data(commodities):
         message += f"{line}\n"
 
     message += "\n**💻 Tech Movers:**\n"
     for line in get_market_data(movers):
+        message += f"{line}\n"
+
+    message += "\n**🪙 Other Crypto Assets:**\n"
+    for line in get_market_data(other_crypto):
+        message += f"{line}\n"
+
+    message += "\n**🏛️ Bonds & Treasuries:**\n"
+    for line in get_market_data(treasuries_yields, is_yield=True):
+        message += f"{line}\n"
+    for line in get_market_data(treasuries_etfs):
         message += f"{line}\n"
 
     # 3. Add the Top News Headline
