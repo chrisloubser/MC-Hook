@@ -1,22 +1,34 @@
 import yfinance as yf
 import requests
 import os
-from dotenv import load_dotenv
+import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime
-
-load_dotenv()
 
 # Securely load the webhook from the environment
 WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
 
-def get_market_data(tickers, names):
+def get_market_data(tickers_dict):
     """Fetches 2-day historical data and calculates percentage change."""
     results = []
+    tickers = list(tickers_dict.keys())
+
+    # Download all tickers at once to speed up the script
+    data = yf.download(tickers, period="2d", group_by='ticker', progress=False)
+
     for ticker in tickers:
+        name = tickers_dict[ticker]
         try:
-            data = yf.Ticker(ticker)
-            hist = data.history(period="2d")
+            # Handle yfinance data structures (varies based on single vs multiple tickers)
+            if len(tickers) == 1:
+                hist = data
+            else:
+                hist = data[ticker]
+
+            # Drop missing values (in case a market was closed)
+            hist = hist.dropna()
+
             if len(hist) >= 2:
                 close_today = hist['Close'].iloc[-1]
                 close_yest = hist['Close'].iloc[-2]
@@ -24,50 +36,91 @@ def get_market_data(tickers, names):
 
                 # Visual indicators
                 emoji = "🟩" if change_pct >= 0 else "🟥"
-                results.append(f"{emoji} **{names[ticker]}**: ${close_today:,.2f} ({change_pct:+.2f}%)")
+
+                # Format price differently based on asset size
+                if close_today > 1000:
+                    price_str = f"{close_today:,.0f}"
+                else:
+                    price_str = f"{close_today:,.2f}"
+
+                results.append(f"{emoji} **{name}**: {price_str} ({change_pct:+.2f}%)")
+            else:
+                results.append(f"⚠️ **{name}**: Market Closed / No Data")
         except Exception:
-            results.append(f"⚠️ Error fetching data for {names[ticker]}")
+            results.append(f"⚠️ **{name}**: Error fetching data")
+
     return results
 
 
-def get_top_news(ticker="SPY"):
-    """Pulls the latest news headline for a given ticker."""
+def get_google_news():
+    """Scrapes the top financial headline from Google News RSS."""
     try:
-        data = yf.Ticker(ticker)
-        news = data.news
-        if news and len(news) > 0:
-            title = news[0].get('title', 'No title available')
-            link = news[0].get('link', '#')
-            return f"📰 **Top Story:** [{title}]({link})"
-    except Exception:
+        # Search query for "Stock Market" top news in the US
+        rss_url = "https://news.google.com/rss/search?q=stock+market+finance&hl=en-US&gl=US&ceid=US:en"
+
+        # Add a user-agent so Google doesn't block the automated request
+        req = urllib.request.Request(rss_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            xml_data = response.read()
+
+        # Parse the XML to grab the first <item> (top story)
+        root = ET.fromstring(xml_data)
+        first_item = root.find('./channel/item')
+
+        if first_item is not None:
+            title = first_item.find('title').text
+            link = first_item.find('link').text
+            return f"📰 **Top Market Story:** [{title}]({link})"
+
+    except Exception as e:
+        print(f"News fetch error: {e}")
         pass
-    return "📰 **Top Story:** Unavailable today."
+
+    return "📰 **Top Market Story:** Unavailable today."
 
 
 def main():
-    # Define the assets you want to track
-    indexes = ['^GSPC', '^IXIC', 'BTC-USD']
-    index_names = {'^GSPC': 'S&P 500', '^IXIC': 'NASDAQ', 'BTC-USD': 'Bitcoin'}
+    # 1. Define Asset Classes
+    indices = {
+        '^GSPC': 'S&P 500',
+        '^IXIC': 'NASDAQ',
+        '^DJI': 'Dow Jones',
+        '^RUT': 'Russell 2000'
+    }
 
-    movers = ['NVDA', 'TSLA', 'AAPL']
-    mover_names = {'NVDA': 'Nvidia', 'TSLA': 'Tesla', 'AAPL': 'Apple'}
+    commodities = {
+        'GC=F': 'Gold',
+        'SI=F': 'Silver',
+        'CL=F': 'Crude Oil'
+    }
 
-    # Construct the Discord message
+    movers = {
+        'NVDA': 'Nvidia',
+        'TSLA': 'Tesla',
+        'AAPL': 'Apple'
+    }
+
+    # 2. Construct the Discord message
     date_str = datetime.now().strftime('%A, %B %d, %Y')
     message = f"## 📊 Daily Market Briefing - {date_str}\n\n"
 
-    message += "**Macro Overview:**\n"
-    for line in get_market_data(indexes, index_names):
+    message += "**🏦 Major Indices:**\n"
+    for line in get_market_data(indices):
         message += f"{line}\n"
 
-    message += "\n**Tech Movers:**\n"
-    for line in get_market_data(movers, mover_names):
+    message += "\n**🛢️ Commodities:**\n"
+    for line in get_market_data(commodities):
         message += f"{line}\n"
 
-    message += f"\n{get_top_news('SPY')}\n\n"
+    message += "\n**💻 Tech Movers:**\n"
+    for line in get_market_data(movers):
+        message += f"{line}\n"
+
+    # 3. Add the Top News Headline
+    message += f"\n{get_google_news()}\n\n"
     message += "_Automated exclusively for Patrons._ 💙"
 
-    # Push to Discord
+    # 4. Push to Discord
     if WEBHOOK_URL:
         payload = {"content": message}
         response = requests.post(WEBHOOK_URL, json=payload)
@@ -76,8 +129,8 @@ def main():
         else:
             print(f"Failed to post: {response.status_code} - {response.text}")
     else:
-        print("⚠️ ERROR: Discord Webhook URL not found in environment variables.")
-        print("Here is the draft of what would have been sent:\n")
+        print("⚠️ ERROR: Discord Webhook URL not found.")
+        print("Draft Output:\n")
         print(message)
 
 
