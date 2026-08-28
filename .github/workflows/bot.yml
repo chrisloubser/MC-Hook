@@ -3,7 +3,7 @@ name: Patreon Market Bot
 on:
   schedule:
     # Runs at 08:00 UTC (10:00 AM EST) Monday through Friday
-    - cron: '0 8 * * 1-5'
+    - cron: '30 7 * * *'
   workflow_dispatch: # This line adds a manual "Run" button for testing
 
 jobs:
