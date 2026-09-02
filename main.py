@@ -141,13 +141,15 @@ def render_category_table(category_name, assets, currency="$"):
     for ticker, name in assets.items():
         df = fetch_asset_data(ticker)
 
-        # --- JSE WORKAROUND START ---
-        # Convert JSE prices from cents (ZAC) to Rands (ZAR)
+        # --- JSE WORKAROUND & DYNAMIC CURRENCY START ---
+        # Set dynamic currency based on ticker origin to handle mixed-currency tables
+        row_currency = currency
         if not df.empty and ticker.endswith('.JO'):
-            df['Close'] = df['Close'] / 100
-        # --- JSE WORKAROUND END ---
+            df['Close'] = df['Close'] / 100  # Convert ZAC to ZAR
+            row_currency = "R"  # Force Rand symbol for JSE assets
+        # --- JSE WORKAROUND & DYNAMIC CURRENCY END ---
 
-        data = calculate_indicators(df, currency=currency)
+        data = calculate_indicators(df, currency=row_currency)
 
         if data:
             rows.append({
@@ -228,6 +230,8 @@ def main():
         '^GSPC': 'S&P 500',
         '^IXIC': 'NASDAQ 100',
         '^DJI': 'Dow Jones',
+        'URTH': 'MSCI World',  # iShares MSCI World ETF proxy
+        'VT': 'Global ETF',  # Vanguard Total World (Proxy for Global 1200)
         '^J203.JO': 'JSE AllShare'
     }
 
