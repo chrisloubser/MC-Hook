@@ -54,40 +54,45 @@ def calculate_indicators(df, currency="$"):
     else:
         price_str = f"{currency}{latest_price:,.2f}"
 
-    # --- Helper: Format Percentages with Emojis ---
-    def format_pct(val):
+    # --- Helper: Format Percentages with 30% Extreme Threshold ---
+    def format_pct(val, check_threshold=False):
         if pd.isna(val):
-            return "⚪ N/A"
-        if val > 0:
-            return f"🟢 {val:+.1f}%"
-        elif val < 0:
-            return f"🔴 {val:+.1f}%"
-        else:
-            return f"⚪ {val:+.1f}%"
+            return "N/A"
+
+        pct_str = f"{val:+.1f}%"
+
+        # Only use indicators on 1D/1W if absolute move exceeds 30%
+        if check_threshold and abs(val) > 30:
+            if val > 0:
+                return f"🟢 {pct_str}"
+            elif val < 0:
+                return f"🔴 {pct_str}"
+
+        return pct_str
 
     # --- 2. 1D Change ---
     if len(df) >= 2:
         prev_close = df['Close'].iloc[-2]
         daily_pct = ((latest_price - prev_close) / prev_close) * 100
-        pct_1d = format_pct(daily_pct)
+        pct_1d = format_pct(daily_pct, check_threshold=True)
     else:
-        pct_1d = "⚪ N/A"
+        pct_1d = "N/A"
 
     def get_past_price(days_back):
         target = latest_date - pd.Timedelta(days=days_back)
         past = df.loc[df.index <= target, 'Close']
         return past.iloc[-1] if not past.empty else None
 
-    def calc_pct(past_price):
+    def calc_pct(past_price, check_threshold=False):
         if past_price and past_price > 0:
             val = ((latest_price - past_price) / past_price) * 100
-            return format_pct(val)
-        return "⚪ N/A"
+            return format_pct(val, check_threshold=check_threshold)
+        return "N/A"
 
     # --- 3. Price Changes ---
-    pct_1w = calc_pct(get_past_price(7))
-    pct_1y = calc_pct(get_past_price(365))
-    pct_2y = calc_pct(get_past_price(730))
+    pct_1w = calc_pct(get_past_price(7), check_threshold=True)
+    pct_1y = calc_pct(get_past_price(365), check_threshold=False)
+    pct_2y = calc_pct(get_past_price(730), check_threshold=False)
 
     # --- 4. 200-Day Moving Average ---
     if len(df) >= 200:
@@ -129,9 +134,8 @@ def fetch_asset_data(ticker_symbol):
 
 def pad_field(text, target_visual_width):
     """Adjusts padding for strings containing emojis so visual column alignment stays exact in Discord."""
-    has_emoji = any(e in text for e in ['🟢', '🔴', '⚪'])
-    # Emojis take 2 monospace columns visually despite len() returning 1
-    visual_len = len(text) + (1 if has_emoji else 0)
+    has_emoji = any(e in text for e in ['🟢', '🔴'])
+    visual_len = len(text) + (2 if has_emoji else 0)  # Emojis take roughly 2 visual widths
     padding_needed = max(0, target_visual_width - visual_len)
     return text + (" " * padding_needed)
 
@@ -143,7 +147,6 @@ def render_category_table(category_name, assets, currency="$"):
         df = fetch_asset_data(ticker)
 
         # --- JSE WORKAROUND & DYNAMIC CURRENCY START ---
-        # Set dynamic currency based on ticker origin to handle mixed-currency tables
         row_currency = currency
         if not df.empty and ticker.endswith('.JO'):
             df['Close'] = df['Close'] / 100  # Convert ZAC to ZAR
@@ -167,31 +170,31 @@ def render_category_table(category_name, assets, currency="$"):
             rows.append({
                 "Asset": name[:10],
                 "Price": "Err",
-                "1D": "⚪ N/A",
-                "1W": "⚪ N/A",
-                "1Y": "⚪ N/A",
-                "2Y": "⚪ N/A",
+                "1D": "N/A",
+                "1W": "N/A",
+                "1Y": "N/A",
+                "2Y": "N/A",
                 "200D": "N/A",
                 "200W": "N/A",
             })
 
-    # Header Definition - Expanded width to account for 4 columns with emojis
+    # Header Definition - Clean, consistent column widths
     table_str = f"### {category_name}\n```text\n"
     table_str += (
-        f"{'Asset':<10} | {'Price':<10} | {'1D':<10} | {'1W':<10} | "
-        f"{'1Y':<10} | {'2Y':<10} | {'200D':<4} | {'200W':<4}\n"
+        f"{'Asset':<10} | {'Price':<10} | {'1D':<7} | {'1W':<7} | "
+        f"{'1Y':<7} | {'2Y':<7} | {'200D':<4} | {'200W':<4}\n"
     )
     table_str += (
-        f"{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 4}-+-{'-' * 4}\n"
+        f"{'-' * 10}-+-{'-' * 10}-+-{'-' * 7}-+-{'-' * 7}-+-{'-' * 7}-+-{'-' * 7}-+-{'-' * 4}-+-{'-' * 4}\n"
     )
 
     for r in rows:
         asset_col = f"{r['Asset']:<10}"
         price_col = f"{r['Price']:<10}"
-        d1_col = pad_field(r['1D'], 10)
-        w1_col = pad_field(r['1W'], 10)
-        y1_col = pad_field(r['1Y'], 10)
-        y2_col = pad_field(r['2Y'], 10)
+        d1_col = pad_field(r['1D'], 7)
+        w1_col = pad_field(r['1W'], 7)
+        y1_col = f"{r['1Y']:<7}"
+        y2_col = f"{r['2Y']:<7}"
         d200_col = f"{r['200D']:<4}"
         w200_col = f"{r['200W']:<4}"
 
@@ -231,8 +234,8 @@ def main():
         '^GSPC': 'S&P 500',
         '^IXIC': 'NASDAQ 100',
         '^DJI': 'Dow Jones',
-        'URTH': 'MSCI World',  # iShares MSCI World ETF proxy
-        'VT': 'Global ETF',  # Vanguard Total World (Proxy for Global 1200)
+        'URTH': 'MSCI World',
+        'VT': 'Global ETF',
         '^J203.JO': 'JSE AllShare'
     }
 
