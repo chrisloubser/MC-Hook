@@ -140,6 +140,13 @@ def render_category_table(category_name, assets, currency="$"):
     rows = []
     for ticker, name in assets.items():
         df = fetch_asset_data(ticker)
+
+        # --- JSE WORKAROUND START ---
+        # Convert JSE prices from cents (ZAC) to Rands (ZAR)
+        if not df.empty and ticker.endswith('.JO'):
+            df['Close'] = df['Close'] / 100
+        # --- JSE WORKAROUND END ---
+
         data = calculate_indicators(df, currency=currency)
 
         if data:
