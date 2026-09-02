@@ -48,29 +48,30 @@ def calculate_indicators(df, currency="$"):
     latest_price = df['Close'].iloc[-1]
     latest_date = df.index[-1]
 
-    # --- 1. Daily Change (1D) & Price Indicator ---
+    # --- 1. Price Formatting (No Emojis) ---
+    if latest_price >= 1000:
+        price_str = f"{currency}{latest_price:,.0f}"
+    else:
+        price_str = f"{currency}{latest_price:,.2f}"
+
+    # --- Helper: Format Percentages with Emojis ---
+    def format_pct(val):
+        if pd.isna(val):
+            return "⚪ N/A"
+        if val > 0:
+            return f"🟢 {val:+.1f}%"
+        elif val < 0:
+            return f"🔴 {val:+.1f}%"
+        else:
+            return f"⚪ {val:+.1f}%"
+
+    # --- 2. 1D Change ---
     if len(df) >= 2:
         prev_close = df['Close'].iloc[-2]
         daily_pct = ((latest_price - prev_close) / prev_close) * 100
-        pct_1d = f"{daily_pct:+.1f}%"
-        daily_val = daily_pct
+        pct_1d = format_pct(daily_pct)
     else:
-        pct_1d = "N/A"
-        daily_val = 0.0
-
-    if daily_val > 0:
-        emoji = "🟢"
-    elif daily_val < 0:
-        emoji = "🔴"
-    else:
-        emoji = "⚪"
-
-    if latest_price >= 1000:
-        num_str = f"{currency}{latest_price:,.0f}"
-    else:
-        num_str = f"{currency}{latest_price:,.2f}"
-
-    price_str = f"{emoji} {num_str}"
+        pct_1d = "⚪ N/A"
 
     def get_past_price(days_back):
         target = latest_date - pd.Timedelta(days=days_back)
@@ -79,23 +80,23 @@ def calculate_indicators(df, currency="$"):
 
     def calc_pct(past_price):
         if past_price and past_price > 0:
-            pct = ((latest_price - past_price) / past_price) * 100
-            return f"{pct:+.1f}%"
-        return "N/A"
+            val = ((latest_price - past_price) / past_price) * 100
+            return format_pct(val)
+        return "⚪ N/A"
 
-    # --- 2. Price Changes ---
+    # --- 3. Price Changes ---
     pct_1w = calc_pct(get_past_price(7))
     pct_1y = calc_pct(get_past_price(365))
     pct_2y = calc_pct(get_past_price(730))
 
-    # --- 3. 200-Day Moving Average ---
+    # --- 4. 200-Day Moving Average ---
     if len(df) >= 200:
         ma_200d = df['Close'].rolling(window=200).mean().iloc[-1]
         status_200d = "Abv" if latest_price > ma_200d else "Blw"
     else:
         status_200d = "N/A"
 
-    # --- 4. 200-Week Moving Average ---
+    # --- 5. 200-Week Moving Average ---
     weekly_closes = df['Close'].resample('W').last().dropna()
     if len(weekly_closes) >= 200:
         ma_200w = weekly_closes.rolling(window=200).mean().iloc[-1]
@@ -165,32 +166,32 @@ def render_category_table(category_name, assets, currency="$"):
         else:
             rows.append({
                 "Asset": name[:10],
-                "Price": "⚪ Err",
-                "1D": "N/A",
-                "1W": "N/A",
-                "1Y": "N/A",
-                "2Y": "N/A",
+                "Price": "Err",
+                "1D": "⚪ N/A",
+                "1W": "⚪ N/A",
+                "1Y": "⚪ N/A",
+                "2Y": "⚪ N/A",
                 "200D": "N/A",
                 "200W": "N/A",
             })
 
-    # Header Definition - Total line length: 67 visual chars (Zero line wrapping in Discord)
+    # Header Definition - Expanded width to account for 4 columns with emojis
     table_str = f"### {category_name}\n```text\n"
     table_str += (
-        f"{'Asset':<10} | {'Price':<11} | {'1D':<5} | {'1W':<5} | "
-        f"{'1Y':<5} | {'2Y':<5} | {'200D':<4} | {'200W':<4}\n"
+        f"{'Asset':<10} | {'Price':<10} | {'1D':<10} | {'1W':<10} | "
+        f"{'1Y':<10} | {'2Y':<10} | {'200D':<4} | {'200W':<4}\n"
     )
     table_str += (
-        f"{'-' * 10}-+-{'-' * 11}-+-{'-' * 5}-+-{'-' * 5}-+-{'-' * 5}-+-{'-' * 5}-+-{'-' * 4}-+-{'-' * 4}\n"
+        f"{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 10}-+-{'-' * 4}-+-{'-' * 4}\n"
     )
 
     for r in rows:
         asset_col = f"{r['Asset']:<10}"
-        price_col = pad_field(r['Price'], 11)
-        d1_col = f"{r['1D']:<5}"
-        w1_col = f"{r['1W']:<5}"
-        y1_col = f"{r['1Y']:<5}"
-        y2_col = f"{r['2Y']:<5}"
+        price_col = f"{r['Price']:<10}"
+        d1_col = pad_field(r['1D'], 10)
+        w1_col = pad_field(r['1W'], 10)
+        y1_col = pad_field(r['1Y'], 10)
+        y2_col = pad_field(r['2Y'], 10)
         d200_col = f"{r['200D']:<4}"
         w200_col = f"{r['200W']:<4}"
 
